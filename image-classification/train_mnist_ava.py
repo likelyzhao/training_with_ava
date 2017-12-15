@@ -22,37 +22,101 @@ logging.basicConfig(level=logging.DEBUG)
 from common import find_mxnet, data, fit
 from common.util import download_file
 import mxnet as mx
+import signal
+from ava.log.logger import logger
+from ava.train import base as train
+import traceback
+import sys
+
+
+
+def clean_up(train_ins, err_msg=""):
+    # AVA-SDK 实例结束，需要调用 done，完成状态上报以及清理工作
+    if train_ins == None:
+        return
+    train_ins.done(err_msg=err_msg)
+
+
+def signal_handler(signum, frame):
+    logger.info("received signal: %s, do clean_up", signum)
+    train_ins = frame.f_locals['train_ins']
+    clean_up(train_ins)
+    exit()
+
+def start_new_training():
+    try:
+        # 绑定信号，如果是接收到信号，表示用户自己选择退出训练实例
+        # 训练实例状态为正常结束
+        SUPPORTED_SIGNALS = (signal.SIGINT, signal.SIGTERM,)
+        for signum in SUPPORTED_SIGNALS:
+            try:
+                signal.signal(signum, signal_handler)
+                logger.info("Bind signal '%s' success to %s",
+                            signum, signal_handler)
+            except Exception as identifier:
+                logger.warning(
+                    "Bind signal '%s' failed, err: %s", signum, identifier)
+
+            # parse args
+        parser = argparse.ArgumentParser(description="train imagenet-1k",
+                                         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        fit.add_fit_args(parser)
+        data.add_data_args(parser)
+        data.add_data_aug_args(parser)
+        # use a large aug level
+        data.set_data_aug_level(parser, 3)
+        parser.set_defaults(
+            # network
+            network='resnet',
+            num_layers=50,
+            # data
+            num_classes=10,
+            num_examples=80000,
+            image_shape='3,224,224',
+            min_random_scale=1,  # if input image has min size k, suggest to use
+            # 256.0/x, e.g. 0.533 for 480
+            # train
+            num_epochs=80,
+            lr_step_epochs='30,60',
+            dtype='float32',
+            batch_size =32
+        )
+        args = parser.parse_args()
+
+        # AVA-SDK 初始化一个训练实例
+        train_ins = train.TrainInstance()
+        # 增加CALLBACK函数
+        batch_end_cb = train_ins.get_monitor_callback(
+            "mxnet",
+            batch_size=args.batch_size,
+            batch_freq=10)
+        args.batch_end_callback = batch_end_cb
+
+
+        # load network
+        from importlib import import_module
+        net = import_module('symbols.' + args.network)
+        sym = net.get_symbol(**vars(args))
+
+        # train
+        fit.fit(args, sym, data.get_rec_iter)
+
+        logger.info("training finish")
+        err_msg = ""
+    except Exception as err:
+        err_msg = "training failed, err: %s" % (err)
+        logger.info(err_msg)
+        traceback.print_exc(file=sys.stderr)
+
+    clean_up(err_msg=err_msg)
+
+
+
+
+
+def main():
+    start_new_training()
+
 
 if __name__ == '__main__':
-    # parse args
-    parser = argparse.ArgumentParser(description="train imagenet-1k",
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    fit.add_fit_args(parser)
-    data.add_data_args(parser)
-    data.add_data_aug_args(parser)
-    # use a large aug level
-    data.set_data_aug_level(parser, 3)
-    parser.set_defaults(
-        # network
-        network          = 'resnet',
-        num_layers       = 50,
-        # data
-        num_classes      = 1000,
-        num_examples     = 1281167,
-        image_shape      = '3,224,224',
-        min_random_scale = 1, # if input image has min size k, suggest to use
-                              # 256.0/x, e.g. 0.533 for 480
-        # train
-        num_epochs       = 80,
-        lr_step_epochs   = '30,60',
-        dtype            = 'float32'
-    )
-    args = parser.parse_args()
-
-    # load network
-    from importlib import import_module
-    net = import_module('symbols.'+args.network)
-    sym = net.get_symbol(**vars(args))
-
-    # train
-    fit.fit(args, sym, data.get_rec_iter)
+    main()
