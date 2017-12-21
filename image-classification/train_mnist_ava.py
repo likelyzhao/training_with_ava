@@ -31,7 +31,7 @@ import sys
 
 
 def clean_up(train_ins, err_msg=""):
-    # AVA-SDK 实例结束，需要调用 done，完成状态上报以及清理工作
+    # AVA-SDK
     if train_ins == None:
         return
     train_ins.done(err_msg=err_msg)
@@ -44,19 +44,17 @@ def signal_handler(signum, frame):
     exit()
 
 def start_new_training():
+    # binding signals
+    SUPPORTED_SIGNALS = (signal.SIGINT, signal.SIGTERM,)
+    for signum in SUPPORTED_SIGNALS:
+        try:
+            signal.signal(signum, signal_handler)
+            logger.info("Bind signal '%s' success to %s",
+                        signum, signal_handler)
+        except Exception as identifier:
+            logger.warning(
+                "Bind signal '%s' failed, err: %s", signum, identifier)
     try:
-        # 绑定信号，如果是接收到信号，表示用户自己选择退出训练实例
-        # 训练实例状态为正常结束
-        SUPPORTED_SIGNALS = (signal.SIGINT, signal.SIGTERM,)
-        for signum in SUPPORTED_SIGNALS:
-            try:
-                signal.signal(signum, signal_handler)
-                logger.info("Bind signal '%s' success to %s",
-                            signum, signal_handler)
-            except Exception as identifier:
-                logger.warning(
-                    "Bind signal '%s' failed, err: %s", signum, identifier)
-
             # parse args
         parser = argparse.ArgumentParser(description="train imagenet-1k",
                                          formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -71,8 +69,8 @@ def start_new_training():
             num_layers=50,
             # data
             num_classes=10,
-            num_examples=80000,
-            image_shape='3,224,224',
+            num_examples=60000,
+            image_shape='3,28,28',
             min_random_scale=1,  # if input image has min size k, suggest to use
             # 256.0/x, e.g. 0.533 for 480
             # train
@@ -83,15 +81,14 @@ def start_new_training():
         )
         args = parser.parse_args()
 
-        # AVA-SDK 初始化一个训练实例
+        # AVA-SDK  new an Instance
         train_ins = train.TrainInstance()
-        # 增加CALLBACK函数
+        # add CALLBACK
         batch_end_cb = train_ins.get_monitor_callback(
             "mxnet",
             batch_size=args.batch_size,
             batch_freq=10)
         args.batch_end_callback = batch_end_cb
-
 
         # load network
         from importlib import import_module
@@ -103,12 +100,17 @@ def start_new_training():
 
         logger.info("training finish")
         err_msg = ""
+        if train_ins == None:
+            return
+        train_ins.done(err_msg=err_msg)
     except Exception as err:
         err_msg = "training failed, err: %s" % (err)
         logger.info(err_msg)
         traceback.print_exc(file=sys.stderr)
 
-    clean_up(err_msg=err_msg)
+        if train_ins == None:
+            return
+        train_ins.done(err_msg=err_msg)
 
 
 
